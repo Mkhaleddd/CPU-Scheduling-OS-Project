@@ -11,12 +11,12 @@ struct Process {
     int turnaroundTime = 0;
 };
 enum SchedulerType {
-    FCFS,
-    SJF_PREEMPTIVE,
-    SJF_NON_PREEMPTIVE,
-    PRIORITY_PREEMPTIVE,
-    PRIORITY_NON_PREEMPTIVE,
-    ROUND_ROBIN
+    SCHED_FCFS,
+    SCHED_SJF_PREEMPTIVE,
+    SCHED_SJF_NON_PREEMPTIVE,
+    SCHED_PRIORITY_PREEMPTIVE,
+    SCHED_PRIORITY_NON_PREEMPTIVE,
+    SCHED_ROUND_ROBIN
 };
 
 extern std::vector<Process> processes;

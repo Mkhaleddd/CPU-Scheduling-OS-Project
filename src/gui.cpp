@@ -1,5 +1,6 @@
 #include "gui.h"
 #include "scheduler.h"
+#include "GanttStep.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QPushButton>
@@ -8,6 +9,8 @@
 #include <QHeaderView>
 #include <QLineEdit>
 #include <QLabel>
+#include <QBrush>
+#include <QPen>
 
 SchedulerGUI::SchedulerGUI(QWidget* parent) : QWidget(parent), currentStepIndex(0) {
     QVBoxLayout* layout = new QVBoxLayout(this);
@@ -118,7 +121,7 @@ void SchedulerGUI::updateSimulation() {
     int x = step.startTime * scale;
     int width = (step.endTime - step.startTime) * scale;
 
-    scene->addRect(x, 0, width, height, QPen(Qt::black), QBrush(Qt::Cyan));
+    scene->addRect(x, 0, width, height, QPen(Qt::black), QBrush(Qt::cyan));
     QGraphicsTextItem* text = scene->addText(QString("P%1").arg(step.pid));
     text->setPos(x + (width / 2) - 10, height / 3);
 
