@@ -3,6 +3,7 @@
 #include <QTimer>
 #include <QTableWidget>
 #include <QLabel>
+#include <QPushButton>
 #include <QGraphicsView>
 #include <QGraphicsScene>
 #include <QLineEdit>    
@@ -17,10 +18,15 @@ private slots:
     void startScheduler();
     void updateSimulation();
     void addProcess();
+    void resetAll();
+    void handleAlgoChange(const QString &algo);
 
 private:
     
     QLineEdit* arrivalInput;
+
+    QPushButton* deleteBtn;
+    QLabel* prioLabel;
     QLineEdit* burstInput;
     QLineEdit* priorityInput;
     QComboBox* algoSelect;
