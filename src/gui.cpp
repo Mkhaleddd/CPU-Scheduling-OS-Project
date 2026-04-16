@@ -1,86 +1,133 @@
 ﻿#include "gui.h"
 #include "scheduler.h"
 #include "GanttStep.h"
+
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QPushButton>
-#include <QGraphicsRectItem>
-#include <QGraphicsTextItem>
 #include <QHeaderView>
-#include <QLineEdit>
-#include <QLabel>
-#include <QBrush>
-#include <QPen>
+#include <QGraphicsTextItem>
 
-SchedulerGUI::SchedulerGUI(QWidget* parent) : QWidget(parent), currentStepIndex(0) {
+// ================= CONSTRUCTOR =================
+SchedulerGUI::SchedulerGUI(QWidget* parent)
+    : QWidget(parent),
+    currentTime(0),
+    lastExecutedPid(-1),
+    stepStartTime(0)
+{
     QVBoxLayout* layout = new QVBoxLayout(this);
-
     QHBoxLayout* inputLayout = new QHBoxLayout();
-    
+
+    arrivalInput = new QLineEdit(this);
+    arrivalInput->setPlaceholderText("Arrival");
+
     burstInput = new QLineEdit(this);
-    burstInput->setPlaceholderText("Burst Time");
-    
+    burstInput->setPlaceholderText("Burst");
+
     priorityInput = new QLineEdit(this);
     priorityInput->setPlaceholderText("Priority");
-    
-    arrivalInput = new QLineEdit(this);
-    arrivalInput->setPlaceholderText("Arrival Time");
 
-    inputLayout->addWidget(new QLabel("Arrival:"));
     inputLayout->addWidget(arrivalInput);
-    inputLayout->addWidget(new QLabel("Burst:"));
     inputLayout->addWidget(burstInput);
-    prioLabel = new QLabel("Prio:", this);
-    inputLayout->addWidget(prioLabel);
     inputLayout->addWidget(priorityInput);
-    
+
+    modeSelect = new QComboBox(this);
+    modeSelect->addItems({"Static", "Live"});
 
     algoSelect = new QComboBox(this);
-    algoSelect->addItems({"FCFS", "SJF (Non-Preemptive)", "SRTF (Preemptive)", "Priority", "Round Robin"});
+    algoSelect->addItems({"FCFS", "Priority"});
 
-    avgWaitingTimeLabel = new QLabel("Average Waiting Time: 0", this);
-    avgTurnaroundTimeLabel = new QLabel("Average Turnaround Time: 0", this);
+    // ⏱ Time label
+    timeLabel = new QLabel("Time: 0", this);
 
+    // Table
     table = new QTableWidget(this);
     table->setColumnCount(4);
-    table->setHorizontalHeaderLabels({"PID", "Arrival", "Burst", "Priority"});
+    table->setHorizontalHeaderLabels({"PID","Arrival","Burst","Remaining"});
     table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    table->setSelectionMode(QAbstractItemView::SingleSelection);
 
+    // Gantt
     scene = new QGraphicsScene(this);
     ganttView = new QGraphicsView(scene, this);
-    ganttView->setMinimumHeight(200);
+    ganttView->setMinimumHeight(220);
 
-    QPushButton* addProcessBtn = new QPushButton("Add Process", this);
-    QPushButton* startBtn = new QPushButton("Start Simulation", this);
-    //for delete button
-    deleteBtn = new QPushButton("Clear All", this);
-    connect(deleteBtn, &QPushButton::clicked, this, &SchedulerGUI::resetAll);
+    // Buttons
+    QPushButton* addBtn = new QPushButton("Add Process", this);
+    QPushButton* startBtn = new QPushButton("Start", this);
 
-     // Adding everything to layout
+    deleteBtn = new QPushButton("Delete Selected", this);
+    pauseBtn = new QPushButton("Pause", this);
+    resumeBtn = new QPushButton("Resume", this);
+    addProcessLiveBtn = new QPushButton("Add Process (Live)", this);
+
+    addProcessLiveBtn->setEnabled(false);
+
     layout->addLayout(inputLayout);
-    layout->addWidget(new QLabel("Choose Algorithm:"));
+    layout->addWidget(modeSelect);
     layout->addWidget(algoSelect);
-    layout->addWidget(addProcessBtn);
+    layout->addWidget(timeLabel);
+    layout->addWidget(addBtn);
+    layout->addWidget(deleteBtn);
+    layout->addWidget(startBtn);
+    layout->addWidget(pauseBtn);
+    layout->addWidget(resumeBtn);
+    layout->addWidget(addProcessLiveBtn);
     layout->addWidget(table);
     layout->addWidget(ganttView);
-    layout->addWidget(avgWaitingTimeLabel);
-    layout->addWidget(avgTurnaroundTimeLabel);
-    layout->addWidget(startBtn);
-    layout->addWidget(deleteBtn);//new
 
     timer = new QTimer(this);
-    connect(timer, &QTimer::timeout, this, &SchedulerGUI::updateSimulation);
+
+    // ================= CONNECTIONS =================
+    connect(addBtn, &QPushButton::clicked, this, &SchedulerGUI::addProcess);
     connect(startBtn, &QPushButton::clicked, this, &SchedulerGUI::startScheduler);
-    connect(addProcessBtn, &QPushButton::clicked, this, &SchedulerGUI::addProcess);
-    connect(algoSelect, &QComboBox::currentTextChanged, this, &SchedulerGUI::handleAlgoChange);
-   //hide priority input if not needed
-    priorityInput->setVisible(false);
-    prioLabel->setVisible(false);
-    table->setColumnHidden(3, true);
+    connect(timer, &QTimer::timeout, this, &SchedulerGUI::updateSimulation);
+
+    // Delete
+    connect(deleteBtn, &QPushButton::clicked, [=]() {
+
+        if (timer->isActive()) return;
+
+        int row = table->currentRow();
+        if (row < 0) return;
+
+        processes.erase(processes.begin() + row);
+        table->removeRow(row);
+
+        // Fix PIDs
+        for (int i = 0; i < processes.size(); i++) {
+            processes[i].pid = i + 1;
+            table->item(i,0)->setText(QString::number(processes[i].pid));
+        }
+    });
+
+    // Pause
+    connect(pauseBtn, &QPushButton::clicked, [=]() {
+        timer->stop();
+        addProcessLiveBtn->setEnabled(true);
+    });
+
+    // Resume
+    connect(resumeBtn, &QPushButton::clicked, [=]() {
+        timer->start(1000);
+        addProcessLiveBtn->setEnabled(false);
+    });
+
+    // Live add
+    connect(addProcessLiveBtn, &QPushButton::clicked, this, &SchedulerGUI::addProcessLive);
+
+    // Priority enable/disable
+    connect(algoSelect, &QComboBox::currentTextChanged, [=](QString algo){
+        if (algo.contains("Priority")) {
+            priorityInput->setEnabled(true);
+            priorityInput->setStyleSheet("");
+        } else {
+            priorityInput->setEnabled(false);
+            priorityInput->setStyleSheet("background-color: lightgray;");
+            priorityInput->clear();
+        }
+    });
 }
 
+// ================= ADD PROCESS =================
 void SchedulerGUI::addProcess() {
     Process p;
     p.pid = processes.size() + 1;
@@ -93,93 +140,177 @@ void SchedulerGUI::addProcess() {
 
     int row = table->rowCount();
     table->insertRow(row);
-    table->setItem(row, 0, new QTableWidgetItem(QString::number(p.pid)));
-    table->setItem(row, 1, new QTableWidgetItem(QString::number(p.arrivalTime)));
-    table->setItem(row, 2, new QTableWidgetItem(QString::number(p.burstTime)));
-    table->setItem(row, 3, new QTableWidgetItem(QString::number(p.priority)));
+
+    table->setItem(row,0,new QTableWidgetItem(QString::number(p.pid)));
+    table->setItem(row,1,new QTableWidgetItem(QString::number(p.arrivalTime)));
+    table->setItem(row,2,new QTableWidgetItem(QString::number(p.burstTime)));
+    table->setItem(row,3,new QTableWidgetItem(QString::number(p.remainingTime)));
 }
 
+// ================= ADD LIVE =================
+void SchedulerGUI::addProcessLive() {
 
+    if (timer->isActive()) return;
 
+    Process p;
+    p.pid = processes.size() + 1;
+    p.arrivalTime = currentTime;
 
+    p.burstTime = burstInput->text().toInt();
+    p.remainingTime = p.burstTime;
+    p.priority = priorityInput->text().toInt();
+
+    processes.push_back(p);
+
+    int row = table->rowCount();
+    table->insertRow(row);
+
+    table->setItem(row,0,new QTableWidgetItem(QString::number(p.pid)));
+    table->setItem(row,1,new QTableWidgetItem(QString::number(p.arrivalTime)));
+    table->setItem(row,2,new QTableWidgetItem(QString::number(p.burstTime)));
+    table->setItem(row,3,new QTableWidgetItem(QString::number(p.remainingTime)));
+}
+
+// ================= START =================
 void SchedulerGUI::startScheduler() {
+    QString algo = algoSelect->currentText();
+    if (algo == "FCFS") FCFS();
+    else if (algo == "SJF") SJF(false);
+    else if (algo == "SRTF") SJF(true);
+    else if (algo == "Priority") PriorityScheduling(false);
+    else if (algo == "Priority (Preemptive)") PriorityScheduling(true);
+    else if (algo == "Round Robin") RoundRobin(2);
     if (processes.empty()) return;
+
     scene->clear();
-    currentStepIndex = 0;
+    ganttLog.clear();
 
-    QString selected = algoSelect->currentText();
-    if (selected == "FCFS") FCFS();
-    else if (selected == "SJF (Non-Preemptive)") SJF(false);
-    else if (selected == "SRTF (Preemptive)") SJF(true);
-    else if (selected == "Priority") PriorityScheduling(false);
-    else if (selected == "Round Robin") RoundRobin(2); // Using 2 as default quantum
-
-    timer->start(300); 
+    if (modeSelect->currentText() == "Static") {
+        FCFS();
+        drawFullGantt();
+    } else {
+        currentTime = 0;
+        lastExecutedPid = -1;
+        stepStartTime = 0;
+        timer->start(1000);
+    }
 }
 
+// ================= UPDATE =================
 void SchedulerGUI::updateSimulation() {
-    if (static_cast<size_t>(currentStepIndex) >= ganttLog.size()) {
+
+    if (modeSelect->currentText() == "Static")
+        return;
+
+    if (allProcessesFinished()) {
+
+        if (lastExecutedPid != -1)
+            ganttLog.push_back({lastExecutedPid, stepStartTime, currentTime});
+
         timer->stop();
-        double totalWait = 0, totalTAT = 0;
-        for(const auto& p : processes) {
-            totalWait += p.waitingTime;
-            totalTAT += p.turnaroundTime;
-        }
-        avgWaitingTimeLabel->setText(QString("Average Waiting Time: %1").arg(totalWait / processes.size()));
-        avgTurnaroundTimeLabel->setText(QString("Average Turnaround Time: %1").arg(totalTAT / processes.size()));
+        drawLiveGantt();
         return;
     }
 
-    GanttStep step = ganttLog[currentStepIndex];
-    int scale = 30;
-    int height = 60;
-    int x = step.startTime * scale;
-    int width = (step.endTime - step.startTime) * scale;
+    simulateStep();
 
-    scene->addRect(x, 0, width, height, QPen(Qt::black), QBrush(Qt::cyan));
-   
-    // Draw timeline ONLY ONCE (first step)
-if (currentStepIndex == 0) {
-    int scale = 30;
-    int y = 70;
+    for (size_t i = 0; i < processes.size(); i++) {
+        table->item(i,3)->setText(QString::number(processes[i].remainingTime));
 
-    for (const auto& s : ganttLog) {
-        int posX = s.startTime * scale;
-
-        QGraphicsTextItem* timeText = scene->addText(QString::number(s.startTime));
-        timeText->setPos(posX, y);
+        if (processes[i].remainingTime == 0)
+            table->item(i,3)->setBackground(Qt::green);
     }
 
-    // Draw LAST end time
-    int lastEnd = ganttLog.back().endTime;
-    QGraphicsTextItem* endText = scene->addText(QString::number(lastEnd));
-    endText->setPos(lastEnd * scale, y);
+    timeLabel->setText("Time: " + QString::number(currentTime));
+
+    drawLiveGantt();
 }
 
-    QGraphicsTextItem* text = scene->addText(QString("P%1").arg(step.pid));
-    text->setPos(x + (width / 2) - 10, height / 3);
-   
-    currentStepIndex++;
+// ================= SIMULATION =================
+void SchedulerGUI::simulateStep() {
 
-}
-  
-    
-// Clear all data and reset the GUI to its initial state
-void SchedulerGUI::resetAll() {
-        processes.clear();
-        ganttLog.clear();
-        table->setRowCount(0);
-        scene->clear();
-        currentStepIndex = 0;
-        timer->stop(); 
-        avgWaitingTimeLabel->setText("Average Waiting Time: 0");
-        avgTurnaroundTimeLabel->setText("Average Turnaround Time: 0");
+    int idx = -1;
+
+    for (size_t i = 0; i < processes.size(); i++) {
+        if (processes[i].arrivalTime <= currentTime &&
+            processes[i].remainingTime > 0) {
+            idx = i;
+            break;
+        }
     }
 
-// only show priority input when Priority scheduling is selected
-void SchedulerGUI::handleAlgoChange(const QString &algo) {
-    bool isPriority = algo.contains("Priority");
-    priorityInput->setVisible(isPriority);
-    prioLabel->setVisible(isPriority);
-    table->setColumnHidden(3, !isPriority);
+    if (idx == -1) {
+        currentTime++;
+        return;
+    }
+
+    Process &p = processes[idx];
+
+    if (p.pid != lastExecutedPid) {
+        if (lastExecutedPid != -1)
+            ganttLog.push_back({lastExecutedPid, stepStartTime, currentTime});
+
+        lastExecutedPid = p.pid;
+        stepStartTime = currentTime;
+    }
+
+    p.remainingTime--;
+    currentTime++;
+
+    if (p.remainingTime == 0)
+        p.completionTime = currentTime;
+}
+
+// ================= DRAW RECT =================
+void SchedulerGUI::drawGanttRect(int pid, int start, int end) {
+
+    int scale = 40;
+    int x = start * scale;
+    int width = (end - start) * scale;
+
+    QColor color = QColor::fromHsv((pid * 70) % 360, 200, 255);
+
+    scene->addRect(x, 0, width, 60, QPen(Qt::black), QBrush(color));
+
+    QGraphicsTextItem* text = scene->addText(QString("P%1").arg(pid));
+    text->setPos(x + width/3, 20);
+}
+
+// ================= DRAW =================
+void SchedulerGUI::drawLiveGantt() {
+    scene->clear();
+
+    for (auto &s : ganttLog)
+        drawGanttRect(s.pid, s.startTime, s.endTime);
+
+    drawTimeline();
+}
+
+void SchedulerGUI::drawFullGantt() {
+    for (auto &s : ganttLog)
+        drawGanttRect(s.pid, s.startTime, s.endTime);
+
+    drawTimeline();
+}
+
+// ================= TIMELINE =================
+void SchedulerGUI::drawTimeline() {
+
+    int scale = 40;
+
+    for (int t = 0; t <= currentTime; t++) {
+        int x = t * scale;
+
+        QGraphicsTextItem* text = scene->addText(QString::number(t));
+        text->setPos(x, 70);
+    }
+}
+
+// ================= CHECK =================
+bool SchedulerGUI::allProcessesFinished() {
+    for (auto &p : processes) {
+        if (p.remainingTime > 0)
+            return false;
+    }
+    return true;
 }
